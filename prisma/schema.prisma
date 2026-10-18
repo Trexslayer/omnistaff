@@ -1,0 +1,365 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+}
+
+enum TenantStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  REJECTED
+  SUSPENDED
+}
+
+enum MembershipStatus {
+  INVITED
+  ACTIVE
+  DISABLED
+}
+
+enum Role {
+  PLATFORM_ADMIN
+  COMPANY_ADMIN
+  HR_MANAGER
+  REPORTING_MANAGER
+  EMPLOYEE
+}
+
+enum LeaveRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  NEEDS_REVIEW
+}
+
+enum AccountingMethod {
+  FIXED_ENTITLEMENT
+  ACCRUAL
+  MANUAL
+}
+
+enum LeaveTransactionType {
+  GRANT
+  ACCRUAL
+  APPROVAL
+  REVERSAL
+  ADJUSTMENT
+  EXPIRY
+}
+
+enum ApprovalOutcome {
+  APPROVED
+  REJECTED
+  EXCEPTION_APPROVED
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+
+model Tenant {
+  id             String       @id @default(cuid())
+  name           String
+  slug           String       @unique
+  status         TenantStatus @default(PENDING_VERIFICATION)
+  verifiedAt     DateTime?
+  verifiedById   String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  memberships   TenantMembership[]
+  employees      Employee[]
+  departments    Department[]
+  leaveTypes     LeaveType[]
+  policies       LeavePolicyVersion[]
+  requests       LeaveRequest[]
+  transactions   LeaveTransaction[]
+  auditEvents    AuditEvent[]
+  outboxEvents   OutboxEvent[]
+  invitations    EmployeeInvitation[]
+  holidays       TenantHoliday[]
+  settings       Json           @default("{}")
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@id([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@id([sessionToken])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+  @@unique([identifier, token])
+}
+
+model TenantMembership {
+  id        String           @id @default(cuid())
+  tenantId  String
+  userId    String
+  role      Role             @default(EMPLOYEE)
+  status    MembershipStatus @default(ACTIVE)
+  createdAt DateTime         @default(now())
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([tenantId, userId])
+  @@index([userId, status])
+  @@index([tenantId, role, status])
+}
+
+model Department {
+  id        String     @id @default(cuid())
+  tenantId  String
+  name      String
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employees Employee[]
+  @@unique([tenantId, name])
+  @@unique([tenantId, id])
+}
+
+model Employee {
+  id             String      @id @default(cuid())
+  tenantId       String
+  userId         String?
+  employeeNumber String
+  firstName      String
+  lastName       String
+  workEmail      String
+  jobTitle       String?
+  departmentId   String?
+  managerUserId  String?
+  startDate      DateTime?
+  active         Boolean     @default(true)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  tenant         Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department     Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  user           User?       @relation("EmployeeLinkedUser", fields: [userId], references: [id], onDelete: SetNull)
+  manager        User?       @relation("EmployeeManagerUser", fields: [managerUserId], references: [id], onDelete: SetNull)
+  requests       LeaveRequest[]
+  transactions   LeaveTransaction[]
+  @@unique([tenantId, employeeNumber])
+  @@unique([tenantId, workEmail])
+  @@index([tenantId, lastName, firstName])
+  @@index([tenantId, managerUserId])
+}
+
+model LeaveType {
+  id              String   @id @default(cuid())
+  tenantId        String
+  name            String
+  code            String
+  paid            Boolean  @default(true)
+  requiresApproval Boolean @default(true)
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  policies        LeavePolicyVersion[]
+  requests        LeaveRequest[]
+  transactions    LeaveTransaction[]
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+}
+
+model LeavePolicyVersion {
+  id                String          @id @default(cuid())
+  tenantId          String
+  leaveTypeId       String
+  version           Int
+  accountingMethod  AccountingMethod
+  annualEntitlement Decimal?        @db.Decimal(8, 2)
+  accrualPerMonth   Decimal?        @db.Decimal(8, 2)
+  allowNegative     Boolean         @default(false)
+  allowUnpaid       Boolean         @default(false)
+  allowPartialDays  Boolean         @default(true)
+  effectiveFrom     DateTime
+  effectiveTo       DateTime?
+  config            Json            @default("{}")
+  createdAt         DateTime        @default(now())
+  createdById       String?
+  tenant            Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leaveType         LeaveType       @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+  requests          LeaveRequest[]
+  transactions      LeaveTransaction[]
+  @@unique([tenantId, leaveTypeId, version])
+  @@index([tenantId, leaveTypeId, effectiveFrom, effectiveTo])
+}
+
+model LeaveRequest {
+  id                String              @id @default(cuid())
+  tenantId          String
+  employeeId        String
+  leaveTypeId       String
+  policyVersionId   String
+  startDate         DateTime
+  endDate           DateTime
+  requestedDays     Decimal             @db.Decimal(8, 2)
+  calculatedDays    Decimal             @db.Decimal(8, 2)
+  reason            String?             @db.Text
+  status            LeaveRequestStatus  @default(PENDING)
+  calculation       Json                @default("{}")
+  policySnapshot    Json                @default("{}")
+  submittedAt       DateTime            @default(now())
+  decidedAt         DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  tenant            Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employee          Employee            @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType         LeaveType           @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+  policyVersion     LeavePolicyVersion  @relation(fields: [policyVersionId], references: [id], onDelete: Restrict)
+  decisions         ApprovalDecision[]
+  transactions      LeaveTransaction[]
+  @@index([tenantId, status, startDate])
+  @@index([tenantId, employeeId, status])
+}
+
+model ApprovalDecision {
+  id             String          @id @default(cuid())
+  tenantId       String
+  requestId      String
+  actorUserId    String
+  outcome        ApprovalOutcome
+  comment        String?         @db.Text
+  exceptionType  String?
+  createdAt      DateTime        @default(now())
+  request        LeaveRequest    @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  actor          User            @relation("DecisionActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  @@index([tenantId, requestId, createdAt])
+}
+
+model LeaveTransaction {
+  id                String               @id @default(cuid())
+  tenantId          String
+  employeeId        String
+  leaveTypeId       String
+  policyVersionId   String?
+  requestId         String?
+  type              LeaveTransactionType
+  quantity          Decimal              @db.Decimal(8, 2)
+  effectiveAt       DateTime             @default(now())
+  idempotencyKey    String               @unique
+  description       String?
+  createdAt         DateTime             @default(now())
+  tenant            Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employee          Employee             @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType         LeaveType            @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+  policyVersion     LeavePolicyVersion?  @relation(fields: [policyVersionId], references: [id], onDelete: SetNull)
+  request           LeaveRequest?        @relation(fields: [requestId], references: [id], onDelete: SetNull)
+  @@index([tenantId, employeeId, leaveTypeId, effectiveAt])
+}
+
+model AuditEvent {
+  id          String   @id @default(cuid())
+  tenantId    String?
+  actorUserId String?
+  action      String
+  entityType  String
+  entityId    String
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  actor       User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  @@index([tenantId, entityType, entityId, createdAt])
+}
+
+model OutboxEvent {
+  id          String       @id @default(cuid())
+  tenantId    String?
+  eventName   String
+  payload     Json
+  status      OutboxStatus @default(PENDING)
+  attempts    Int          @default(0)
+  nextAttempt DateTime     @default(now())
+  sentAt      DateTime?
+  createdAt   DateTime     @default(now())
+  tenant      Tenant?      @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  @@index([status, nextAttempt])
+}
+
+
+model EmployeeInvitation {
+  id              String           @id @default(cuid())
+  tenantId        String
+  email           String
+  firstName       String
+  lastName        String
+  employeeNumber  String
+  jobTitle        String?
+  departmentName  String?
+  role            Role             @default(EMPLOYEE)
+  tokenHash       String           @unique
+  status          InvitationStatus @default(PENDING)
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  invitedById     String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId, status, createdAt])
+}
+
+
+model TenantHoliday {
+  id          String   @id @default(cuid())
+  tenantId    String
+  date        DateTime @db.Date
+  name        String
+  createdById String?
+  createdAt   DateTime @default(now())
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@unique([tenantId, date])
+  @@index([tenantId, date])
+}
+
+model User {
+  id              String   @id @default(cuid())
+  name            String?
+  email           String?  @unique
+  emailVerified   DateTime?
+  image           String?
+  passwordHash    String?  // Argon2id hash; never store plaintext
+  isPlatformAdmin Boolean  @default(false)
+
+  accounts        Account[]
+  sessions        Session[]
+  memberships     TenantMembership[]
+  linkedEmployees Employee[] @relation("EmployeeLinkedUser")
+  managedEmployees Employee[] @relation("EmployeeManagerUser")
+  decisions       ApprovalDecision[] @relation("DecisionActor")
+  auditEvents     AuditEvent[] @relation("AuditActor")
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
