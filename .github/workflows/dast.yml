@@ -1,0 +1,27 @@
+
+name: OmniStaff Local DAST
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zap-scan:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run OWASP ZAP Baseline Scan
+        shell: pwsh
+        run: |
+          docker run --rm `
+            --network host `
+            -v "${{ github.workspace }}:/zap/wrk/:rw" `
+            ghcr.io/zaproxy/zaproxy:stable `
+            zap-baseline.py `
+            -t http://host.docker.internal:3000 `
+            -r zap-report.html
