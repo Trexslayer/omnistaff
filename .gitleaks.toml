@@ -1,0 +1,12 @@
+title = "OmniStaff Gitleaks Configuration"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore build output, dependencies, and local environment files"
+paths = [
+  '''(^|[/\\])\.next([/\\].*)?$''',
+  '''(^|[/\\])node_modules([/\\].*)?$''',
+  '''(^|[/\\])\.env(\..*)?$'''
+]
