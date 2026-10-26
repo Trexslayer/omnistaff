@@ -1,13 +1,12 @@
 import type { NextConfig } from "next";
 
 // Strict API CSP: API routes return structured data (e.g. JSON) and do not load scripts or styles
-const apiCsp = `
-  default-src 'none';
-  frame-ancestors 'none';
-  base-uri 'none';
-`
-  .replace(/\s{2,}/g, " ")
-  .trim();
+const apiCsp = [
+  "default-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join("; ");
 
 const securityHeaders = [
   {
